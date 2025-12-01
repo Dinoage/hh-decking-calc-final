@@ -1,0 +1,26 @@
+.hh-dc-form {
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+}
+.hh-dc-step label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.hh-dc-step input,
+.hh-dc-step select {
+  width: 100%;
+  padding: 8px;
+}
+.hh-dc-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.hh-dc-result {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f7f7f7;
+  border-radius: 8px;
+}
