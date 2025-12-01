@@ -59,10 +59,13 @@ class Calculator {
 			}
 
 			$lines[] = [
-				'type'       => 'simple',
-				'product_id' => $map['product'],
-				'qty'        => $packs_needed,
-				'meta'       => [
+				'type'         => 'simple',
+				'product_id'   => $map['product'],
+				'qty'          => $packs_needed,
+				'image'        => self::get_image_url( $map['product'] ),
+				'title'        => $map['label'],
+				'cutting_note' => sprintf( 'Berekend: %.2f m². (Totaal %d losse tegels in %d pakken).', $surface_m2, $total_tiles, $packs_needed ),
+				'meta'         => [
 					'_hh_dc_summary' => sprintf(
 						__( '%s — %d pakken (totaal %d tegels, 6 st/pak, 0.54m²/pak)', 'hh-decking-calc' ),
 						$map['label'],
@@ -100,6 +103,9 @@ class Calculator {
 					'product_id'   => $map['product'],
 					'variation_id' => $variation_id,
 					'qty'          => (int) $qty,
+					'image'        => self::get_image_url( $variation_id ) ?: self::get_image_url( $map['product'] ),
+					'title'        => get_the_title( $map['product'] ) . ' (' . $len_mm . 'mm)',
+					'cutting_note' => '<strong>Zaaginstructie:</strong> ' . ( $dist['explain'] ?? 'Plaats volgens legplan.' ),
 					'meta'         => [
 						'_hh_dc_summary' => sprintf(
 							__( '%s — %d× %d mm (rijen: %d, uitleg: %s)', 'hh-decking-calc' ),
@@ -149,6 +155,9 @@ class Calculator {
 					'type'       => 'simple',
 					'product_id' => $map['product'],
 					'qty'        => $total_qty,
+					'image'        => self::get_image_url( $map['product'] ),
+					'title'        => $map['label'],
+					'cutting_note' => "Inclusief {$waste_txt} zaagverlies voor visgraat patroon.",
 					'meta'       => [
 						'_hh_dc_summary' => sprintf(
 							__( '%s — %d stuks (Opp: %.2fm², Plank: %dx%dmm, Waste: %s)', 'hh-decking-calc' ),
@@ -176,6 +185,9 @@ class Calculator {
 					'type'       => 'simple',
 					'product_id' => $map['product'],
 					'qty'        => (int) $calc['qty'],
+					'image'        => self::get_image_url( $map['product'] ),
+					'title'        => $map['label'],
+					'cutting_note' => '<strong>Advies:</strong> ' . ( $calc['explain'] ?? '' ),
 					'meta'       => [
 						'_hh_dc_summary' => sprintf(
 							__( '%s — %d× %d mm (rijen: %d, %s)', 'hh-decking-calc' ),
@@ -211,6 +223,9 @@ class Calculator {
 					'product_id'   => $map['product'],
 					'variation_id' => $variation_id,
 					'qty'          => (int) $qty,
+					'image'        => self::get_image_url( $variation_id ) ?: self::get_image_url( $map['product'] ),
+					'title'        => get_the_title( $map['product'] ) . ' (' . $len_mm . 'mm)',
+					'cutting_note' => '<strong>Zaaginstructie:</strong> ' . ( $dist['explain'] ?? '' ),
 					'meta'         => [
 						'_hh_dc_summary' => sprintf(
 							__( '%s — %d× %d mm (rijen: %d, %s)', 'hh-decking-calc' ),
@@ -234,6 +249,9 @@ class Calculator {
 				'type'       => 'simple',
 				'product_id' => $regels['product_id'],
 				'qty'        => $regels['qty'],
+				'image'      => self::get_image_url( $regels['product_id'] ),
+				'title'      => $regels['label'],
+				'cutting_note' => 'Onderconstructie (om de 40 à 50cm h.o.h.).',
 				'meta'       => [ '_hh_dc_summary' => $regels['_hh_dc_summary'] ],
 			];
 		}
@@ -248,6 +266,9 @@ class Calculator {
 					'type'       => 'simple',
 					'product_id' => $palen['product_id'],
 					'qty'        => $palen['qty'],
+					'image'      => self::get_image_url( $palen['product_id'] ),
+					'title'      => $palen['label'],
+					'cutting_note' => 'Fundering voor de onderregels (ca. 1m h.o.h.).',
 					'meta'       => [ '_hh_dc_summary' => $palen['_hh_dc_summary'] ],
 				];
 			}
@@ -258,11 +279,17 @@ class Calculator {
 			$schroeven = self::calc_schroeven( $height, $total_planks_qty, $regels['qty'], $total_rows );
 
 			if ( $schroeven ) {
+				$total_screws_info = $schroeven['total_items'] ?? 0;
+				
 				$lines[] = [
 					'type'       => 'variation',
 					'product_id' => $schroeven['product_id'],
 					'variation_id' => $schroeven['variation_id'],
 					'qty'        => $schroeven['qty'],
+					'image'      => self::get_image_url( $schroeven['product_id'] ),
+					'title'      => $schroeven['label'],
+					// Nieuw: toon totaal berekend aantal
+					'cutting_note' => sprintf( '<strong>Berekend aantal:</strong> %d stuks. (Wordt geleverd in volle dozen).', $total_screws_info ),
 					'meta'       => [ '_hh_dc_summary' => $schroeven['_hh_dc_summary'] ],
 				];
 			}
@@ -273,10 +300,15 @@ class Calculator {
 			$slotbouten = self::calc_slotbouten( $palen['qty'], $regels['label'] ?? '', $poleSize );
 
 			if ( $slotbouten ) {
+				$total_bolds = $slotbouten['total_items'] ?? 0;
+
 				$lines[] = [
 					'type'       => 'simple',
 					'product_id' => $slotbouten['product_id'],
 					'qty'        => $slotbouten['qty'],
+					'image'      => self::get_image_url( $slotbouten['product_id'] ),
+					'title'      => $slotbouten['label'],
+					'cutting_note' => sprintf( '<strong>Berekend aantal:</strong> %d stuks (1 per paal).', $total_bolds ),
 					'meta'       => [ '_hh_dc_summary' => $slotbouten['_hh_dc_summary'] ],
 				];
 			}
@@ -287,10 +319,15 @@ class Calculator {
 			$clips = self::calc_clips( $total_planks_qty, $regels['qty'], $total_rows, $subtype );
 
 			foreach ( $clips as $clip ) {
+				$total_clips = $clip['total_items'] ?? 0;
+				
 				$lines[] = [
 					'type'       => 'simple',
 					'product_id' => $clip['product_id'],
 					'qty'        => $clip['qty'],
+					'image'      => self::get_image_url( $clip['product_id'] ),
+					'title'      => get_the_title( $clip['product_id'] ),
+					'cutting_note' => sprintf( '<strong>Berekend aantal:</strong> %d stuks. (Wordt geleverd in volle dozen).', $total_clips ),
 					'meta'       => [ '_hh_dc_summary' => $clip['_hh_dc_summary'] ],
 				];
 			}
@@ -304,6 +341,9 @@ class Calculator {
 					'type'       => 'simple',
 					'product_id' => $item['product_id'],
 					'qty'        => $item['qty'],
+					'image'      => self::get_image_url( $item['product_id'] ),
+					'title'      => get_the_title( $item['product_id'] ) ?: 'Onderhoudsolie',
+					'cutting_note' => sprintf( 'Berekend verbruik voor ca. %.1f m².', $surface_m2 ),
 					'meta'       => [ '_hh_dc_summary' => $item['_hh_dc_summary'] ],
 				];
 			}
@@ -314,6 +354,21 @@ class Calculator {
 			'surface_m2' => $surface_m2,
 			'lines'      => $lines ?: [],
 		];
+	}
+
+	/**
+	 * Helper om afbeelding URL op te halen
+	 */
+	private static function get_image_url( int $product_id ): string {
+		if ( function_exists( 'get_the_post_thumbnail_url' ) && $product_id > 0 ) {
+			$url = get_the_post_thumbnail_url( $product_id, 'thumbnail' );
+			if ( $url ) return $url;
+		}
+		// Fallback naar WC placeholder indien beschikbaar
+		if ( function_exists( 'wc_placeholder_img_src' ) ) {
+			return wc_placeholder_img_src();
+		}
+		return '';
 	}
 
 	
@@ -350,13 +405,13 @@ class Calculator {
 		if ( $len_m <= $longest_m ) {
 			$best_fit_mm = self::ceil_length( $len_m, $lengths );
 			$add( $best_fit_mm, $rows );
-			$explain[] = sprintf('Kort terras (≤ %.2fm): Alles uit 1 lengte (%dmm)', $longest_m, $best_fit_mm);
+			$explain[] = sprintf('Alles uit 1 lengte van %dmm halen (Terras ≤ %.2fm).', $best_fit_mm, $longest_m);
 			
 			return [
 				'by_length' => $by_length,
 				'total_qty' => (int) array_sum( $by_length ),
 				'rows'      => $rows,
-				'explain'   => implode(' | ', $explain),
+				'explain'   => implode(' ', $explain),
 			];
 		}
 
@@ -364,7 +419,7 @@ class Calculator {
 		if ( $len_m > ( 2 * $longest_m ) ) {
 			$add( $longest_mm, $rows );
 			$rest_m = $len_m - $longest_m;
-			$explain[] = sprintf('Lengte > 2x max: 1x %dmm per rij, rest %.2fm', $longest_mm, $rest_m);
+			$explain[] = sprintf('Leg 1x %dmm per rij, en vul aan met de rest (%.2fm).', $longest_mm, $rest_m);
 			$len_m = $rest_m; 
 			$target_mm = (int) round($len_m * 1000);
 		}
@@ -383,12 +438,12 @@ class Calculator {
 				if ( $L_pair_mm > 0 ) {
 					$qty_pairs = (int) ceil( $rows / 2 );
 					$add( $L_pair_mm, $qty_pairs );
-					$explain[] = sprintf('Max-Strat: 1x %dmm + Rest (paren in %dmm)', $longest_mm, $L_pair_mm);
+					$explain[] = sprintf('Plaats 1x %dmm per rij. Voor de reststukken: zaag de %dmm plank doormidden voor 2 rijen.', $longest_mm, $L_pair_mm);
 				} else {
 					$L_single_mm = Calculator::ceil_length( $remainder_mm / 1000, $lengths );
 					if ( $L_single_mm == 0 ) $L_single_mm = $longest_mm; 
 					$add( $L_single_mm, $rows );
-					$explain[] = sprintf('Max-Strat: 1x %dmm + Rest (enkel %dmm)', $longest_mm, $L_single_mm);
+					$explain[] = sprintf('Plaats 1x %dmm per rij. Vul het restant aan met een stuk uit een %dmm plank.', $longest_mm, $L_single_mm);
 				}
 			}
 
@@ -404,11 +459,11 @@ class Calculator {
 			if ( $L30_pair_mm > 0 ) {
 				$qty_pairs = (int) ceil( $rows / 2 );
 				$add( $L30_pair_mm, $qty_pairs );
-				$explain[] = sprintf('70/30: 70%%(%dmm) + 2x30%% (paren %dmm)', $L70_mm, $L30_pair_mm);
+				$explain[] = sprintf('70/30 Verdeling: Gebruik %dmm voor het lange deel. Voor het korte deel: zaag een %dmm plank door de helft (goed voor 2 rijen).', $L70_mm, $L30_pair_mm);
 			} else {
 				$L30_direct_mm = Calculator::ceil_length( $seg30, $lengths );
 				$add( $L30_direct_mm, $rows );
-				$explain[] = sprintf('70/30: 70%%(%dmm) + 30%%(%dmm)', $L70_mm, $L30_direct_mm);
+				$explain[] = sprintf('70/30 Verdeling: Gebruik %dmm (lang) en %dmm (kort).', $L70_mm, $L30_direct_mm);
 			}
 		}
 
@@ -417,7 +472,7 @@ class Calculator {
 			'by_length' => $by_length,
 			'total_qty' => (int) array_sum( $by_length ),
 			'rows'      => $rows,
-			'explain'   => implode(' | ', $explain),
+			'explain'   => implode(' ', $explain),
 		];
 	}
 
@@ -453,7 +508,7 @@ class Calculator {
 			'qty'          => (int) $boards_with_waste,
 			'rows'         => $rows,
 			'board_len_mm' => $board_len_mm,
-			'explain'      => sprintf('rijbreedte: %.3fm, rijen: %d, +3%% zaagverlies', $row_width_m, $rows),
+			'explain'      => sprintf('Rijbreedte: %.3fm, Totaal %d rijen. Inclusief 3%% zaagverlies.', $row_width_m, $rows),
 		];
 	}
 
@@ -479,14 +534,14 @@ class Calculator {
 		if ( $len_m <= $longest_m ) {
 			$best_fit_mm = self::ceil_length( $len_m, $lengths );
 			$by_length[$best_fit_mm] = $rows;
-			$explain = sprintf('Lengte %.2fm ≤ %.2fm → alleen %dmm × %d', $len_m, $longest_m, $best_fit_mm, $rows);
+			$explain = sprintf('Lengte %.2fm past binnen %.2fm → bestel %d stuks van %dmm.', $len_m, $longest_m, $rows, $best_fit_mm);
 		}
 		else {
 			$shortest_mm = reset( $lengths );
 			$by_length[$longest_mm] = $rows;
 			$qty_pairs = (int) ceil( $rows / 2 ); 
 			$by_length[$shortest_mm] = $qty_pairs;
-			$explain = sprintf('70/30: %dmm × %d + %dmm × %d (paren)', $longest_mm, $rows, $shortest_mm, $qty_pairs);
+			$explain = sprintf('70/30 Verdeling: %d rijen van %dmm. Vul aan met de %dmm plank (zaag doormidden voor 2 rijen).', $rows, $longest_mm, $shortest_mm);
 		}
 
 		return [
@@ -496,10 +551,6 @@ class Calculator {
 			'explain'   => $explain,
 		];
 	}
-
-	// ... [De methodes calc_regels, calc_piketpalen, calc_schroeven, calc_slotbouten, calc_clips blijven ongewijzigd, maar voor volledigheid moeten ze erin staan] ...
-    // Voor de output in dit venster kort ik ze af, maar in het bestand moet je de originele code behouden.
-    // Ik plak ze hieronder in voor de zekerheid.
 
 	private static function calc_regels( float $len_m, string $type, array $map, string $poles ): ?array {
 		if ( $len_m <= 0 ) return null;
@@ -552,7 +603,14 @@ class Calculator {
 		$total_screws = ( ( $rows * $regels_qty ) * 2 ) + ( max( 0, $plank_qty - $rows ) * 2 );
 		$dozen = (int) ceil( $total_screws / 200 );
 
-		return ['qty' => $dozen, 'product_id' => (int) $cfg['product_id'], 'variation_id' => (int) $variation_id, 'label' => $cfg['label'], '_hh_dc_summary'=> sprintf('%s — %d doos/dozen (%s)', $cfg['label'], $dozen, $variation_key)];
+		return [
+			'qty' => $dozen, 
+			'total_items' => $total_screws, // ✅ Toegevoegd voor output
+			'product_id' => (int) $cfg['product_id'], 
+			'variation_id' => (int) $variation_id, 
+			'label' => $cfg['label'], 
+			'_hh_dc_summary'=> sprintf('%s — %d doos/dozen (%s)', $cfg['label'], $dozen, $variation_key)
+		];
 	}
 
 	/**
@@ -583,6 +641,7 @@ class Calculator {
 
 		return [
 			'qty'        => $dozen,
+			'total_items' => $palen_qty, // ✅ Toegevoegd voor output
 			'product_id' => (int) ($cfg['product_id'] ?? 0),
 			'label'      => $cfg['label'] ?? 'Slotbouten',
 			'_hh_dc_summary' => sprintf(
@@ -612,12 +671,22 @@ class Calculator {
 				$dozen = (int) ceil( $total_clips / $pack_size );
 				$summary = sprintf('Clips: %d rijen x %d regels = %d stuks', $rows, $regels_qty, $total_clips);
 			}
-			$out[] = ['product_id' => (int) $cfg_middle['product_id'], 'qty' => $dozen, '_hh_dc_summary' => sprintf('%s — %d doos/dozen (%s)', $cfg_middle['label'], $dozen, $summary)];
+			$out[] = [
+				'product_id' => (int) $cfg_middle['product_id'], 
+				'qty' => $dozen, 
+				'total_items' => $total_clips, // ✅ Toegevoegd
+				'_hh_dc_summary' => sprintf('%s — %d doos/dozen (%s)', $cfg_middle['label'], $dozen, $summary)
+			];
 		}
 		
 		$cfg_start  = CONFIG['accessories']['startclips'] ?? null;
 		if ( $cfg_start && ! empty( $cfg_start['product_id'] ) && $subtype !== 'visgraat' ) {
-			$out[] = ['product_id' => (int) $cfg_start['product_id'], 'qty' => $regels_qty, '_hh_dc_summary' => sprintf('%s — %d stuks', $cfg_start['label'], $regels_qty)];
+			$out[] = [
+				'product_id' => (int) $cfg_start['product_id'], 
+				'qty' => $regels_qty, 
+				'total_items' => $regels_qty, // ✅ Toegevoegd
+				'_hh_dc_summary' => sprintf('%s — %d stuks', $cfg_start['label'], $regels_qty)
+			];
 		}
 		return $out;
 	}

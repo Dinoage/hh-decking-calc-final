@@ -194,13 +194,38 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       const lines = data.data.lines;
-      let html = `<h4>Resultaat</h4>
-                  <p>Oppervlakte totaal: ${data.data.surface_m2} m²</p>
-                  <ul>`;
+      
+      // Header met totaal oppervlakte en nieuwe grid layout
+      let html = `<div class="hh-dc-summary-header">
+                    <h4>Resultaat & Materiaallijst</h4>
+                    <p>Berekende oppervlakte: <strong>${data.data.surface_m2} m²</strong></p>
+                  </div>
+                  <div class="hh-dc-results-grid">`;
+
       lines.forEach((line) => {
-        html += `<li>${line.meta._hh_dc_summary}</li>`;
+        // Fallbacks voor als er geen afbeelding is
+        const imgUrl = line.image || 'https://via.placeholder.com/100?text=Geen+foto'; 
+        const title = line.title || line.meta._hh_dc_summary;
+        // Alleen de note tonen als die gevuld is
+        const note = line.cutting_note ? `<div class="hh-dc-cutting-note">${line.cutting_note}</div>` : '';
+
+        html += `
+          <div class="hh-dc-item-card">
+            <div class="hh-dc-item-img">
+              <img src="${imgUrl}" alt="${title}" />
+            </div>
+            <div class="hh-dc-item-content">
+                <div class="hh-dc-item-header">
+                    <span class="hh-dc-qty">${line.qty}x</span>
+                    <span class="hh-dc-title">${title}</span>
+                </div>
+                ${note}
+            </div>
+          </div>
+        `;
       });
-      html += "</ul>";
+
+      html += "</div>"; // sluit grid
       resultBox.innerHTML = html;
 
       addBtn.dataset.lines = JSON.stringify(lines);
