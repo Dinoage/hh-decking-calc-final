@@ -38,13 +38,18 @@ class Calculator {
 		}
 
 		$lines = [];
+		$total_planks_qty = 0;
+		$total_rows = 0;
 
-		// CASE A: Hout — speciale berekening (70/30-regel + paren van 30%-rest)
+		// CASE A: Hout — (Versie 2.0: Best fit OR 70/30)
 		if ( $type === 'hout' ) {
 			$dist = self::calculate_hout_planken( $map, $len_m, $wid_m );
 			if ( empty( $dist['by_length'] ) || $dist['total_qty'] <= 0 ) {
 				return [ 'error' => __( 'Kon aantal planken niet berekenen voor hout.', 'hh-decking-calc' ) ];
 			}
+
+			$total_planks_qty = $dist['total_qty'];
+			$total_rows       = $dist['rows'];
 
 			foreach ( $dist['by_length'] as $len_mm => $qty ) {
 				$variation_id = $map['length_variations'][ $len_mm ] ?? 0;
@@ -71,13 +76,16 @@ class Calculator {
 
 
 		/**
-		 * CASE B: Bamboe (één lengte, 6mm speling, 3% zaagverlies)
+		 * CASE B: Bamboe
 		 */
 		elseif ( $type === 'bamboe' ) {
 			$calc = self::calculate_bamboe_planken( $map, $len_m, $wid_m );
 			if ( $calc['qty'] <= 0 ) {
 				return [ 'error' => __( 'Kon aantal bamboe planken niet berekenen.', 'hh-decking-calc' ) ];
 			}
+
+			$total_planks_qty = $calc['qty'];
+			$total_rows       = $calc['rows'];
 
 			$lines[] = [
 				'type'       => 'simple',
@@ -97,13 +105,16 @@ class Calculator {
 		}
 
 		/**
-		 * CASE C: Composiet — 2 lengtes (2900 / 4000) met 70/30 boven 4m
+		 * CASE C: Composiet — (Versie 2.0: Best fit OR 70/30)
 		 */
 		elseif ( $type === 'composiet' ) {
 			$dist = self::calculate_composiet_planken( $map, $len_m, $wid_m );
 			if ( empty( $dist['by_length'] ) || $dist['total_qty'] <= 0 ) {
 				return [ 'error' => __( 'Kon aantal planken niet berekenen voor composiet.', 'hh-decking-calc' ) ];
 			}
+
+			$total_planks_qty = $dist['total_qty'];
+			$total_rows       = $dist['rows'];
 
 			foreach ( $dist['by_length'] as $len_mm => $qty ) {
 				$variation_id = $map['length_variations'][ $len_mm ] ?? 0;
@@ -156,9 +167,10 @@ class Calculator {
 			}
 		}
 
-		// === Accessoires stap 3: SCHROEVEN ===
-		if ( $type === 'hout' && ! empty( $regels ) && ! empty( $dist['total_qty'] ) ) {
-			$schroeven = self::calc_schroeven( $height, $dist['total_qty'], $regels['qty'] );
+		// === Accessoires stap 3: SCHROEVEN (Hout) ===
+		// Nieuwe logica: rijen x regels + koppelingen
+		if ( $type === 'hout' && ! empty( $regels ) && $total_planks_qty > 0 ) {
+			$schroeven = self::calc_schroeven( $height, $total_planks_qty, $regels['qty'], $total_rows );
 
 			if ( $schroeven ) {
 				$lines[] = [
@@ -172,6 +184,7 @@ class Calculator {
 		}
 
 		// === Accessoires stap 4: SLOTBOUTEN ===
+		// Nieuwe logica: dikte paal + dikte regel + 15mm
 		if ( $poles === 'with' && ! empty( $palen ) ) {
 			$slotbouten = self::calc_slotbouten( $palen['qty'], $regels['label'] ?? '', $poleSize );
 
@@ -185,9 +198,10 @@ class Calculator {
 			}
 		}
 		
-		// === Accessoires stap 5: CLIPS ===
-		if ( in_array( $type, ['bamboe', 'composiet'], true ) && ! empty( $regels ) && ! empty( $calc['qty'] ) ) {
-			$clips = self::calc_clips( $calc['qty'], $regels['qty'] );
+		// === Accessoires stap 5: CLIPS (Bamboe & Composiet) ===
+		// Visgraat = planken x 4. Anders basis clips (rijen x regels).
+		if ( in_array( $type, ['bamboe', 'composiet'], true ) && ! empty( $regels ) && $total_planks_qty > 0 ) {
+			$clips = self::calc_clips( $total_planks_qty, $regels['qty'], $total_rows, $subtype );
 
 			foreach ( $clips as $clip ) {
 				$lines[] = [
@@ -199,7 +213,7 @@ class Calculator {
 			}
 		}
 
-		// ✅ Nieuw toegevoegd: sluit altijd af met geldige return
+		// ✅ Sluit af met geldige return
 		return [
 			'surface_m2' => $surface_m2,
 			'lines'      => $lines ?: [],
@@ -208,19 +222,11 @@ class Calculator {
 
 	
 	/**
-	 * Hout: verdeel aantallen per lengte-variatie volgens 70/30-regel.
-	 * - Rijen = ceil(breedte / ((plank_breedte + 5mm)/1000))
-	 * - Als 2× langste <= lengte: per rij 1× langste + 70/30 over rest (lengte - langste)
-	 * - Anders: 70/30 over totale lengte
-	 * - 30%-deel: als geen stocklengte >= 30% → gebruik paren: stocklengte >= 2×30%, qty = ceil(rijen/2)
-	 */
-	/**
 	 * Hout: verdeel aantallen per lengte-variatie.
-	 * * NIEUWE LOGICA:
-	 * 1. Als 70% van lengte > langste voorraadplank:
-	 * -> Gebruik 1x langste plank + vul rest op (met parens-check).
-	 * 2. Anders:
-	 * -> Standaard 70/30 regel.
+	 * * UPDATE 2.0:
+	 * 1. (NIEUW) Past het in 1 planklengte? -> Pak dichtstbijzijnde plank (geen 70/30).
+	 * 2. Langer dan 2x max? -> 1x max + rest berekening.
+	 * 3. Anders -> Standaard 70/30 regel.
 	 */
 	private static function calculate_hout_planken( array $map, float $len_m, float $wid_m ): array {
 		$width_mm = (int) ( $map['width_mm'] ?? 0 );
@@ -230,10 +236,10 @@ class Calculator {
 			return [ 'by_length' => [], 'total_qty' => 0, 'rows' => 0, 'explain' => __( 'Ongeldige plankconfiguratie.', 'hh-decking-calc' ) ];
 		}
 
-		sort( $lengths );               // oplopend (bijv: 2450, ..., 4900)
-		$longest_mm = end( $lengths );  // langste plank (4900)
+		sort( $lengths );               // oplopend
+		$longest_mm = end( $lengths );  // langste plank
 		$longest_m  = $longest_mm / 1000;
-		$target_mm  = (int)($len_m * 1000); // Totaal benodigde lengte in mm
+		$target_mm  = (int) round($len_m * 1000); 
 
 		// --- Rijen berekenen
 		$spacing_mm  = 5;
@@ -243,93 +249,86 @@ class Calculator {
 		$by_length = [];
 		$explain   = [];
 
-		// Helper functie om aantallen op te tellen
 		$add = function( int $len_mm, int $qty ) use ( &$by_length ) {
 			if ( $qty <= 0 ) return;
 			$by_length[ $len_mm ] = ( $by_length[ $len_mm ] ?? 0 ) + $qty;
 		};
 
 		// ---------------------------------------------------------
-		// SCENARIO 1: Zeer lang terras (> 2x langste plank)
+		// SCENARIO 0 (NIEUW): Past in één lengte?
 		// ---------------------------------------------------------
-		// Bijv: 12 meter. Dan leggen we sowieso 1 hele plank per rij, en kijken we naar de rest.
-		if ( $len_m > ( 2 * $longest_m ) ) {
-			// Dit is een simpele benadering voor >10m: 1x langste + recursie/rest
-			$add( $longest_mm, $rows );
-			$rest_m = $len_m - $longest_m;
-			$explain[] = sprintf('Lengte > 2x max: 1x %dmm per rij, rest %.2fm berekenen', $longest_mm, $rest_m);
+		if ( $len_m <= $longest_m ) {
+			// Zoek de kleinste plank die groot genoeg is
+			$best_fit_mm = self::ceil_length( $len_m, $lengths );
 			
-			// Hier zou je eigenlijk recursief kunnen zijn, maar voor nu doen we simpel de rest:
-			// We behandelen de 'rest' alsof het een nieuw terras is voor de logica hieronder.
-			$len_m = $rest_m; 
-			$target_mm = (int)($len_m * 1000);
+			$add( $best_fit_mm, $rows );
+			$explain[] = sprintf('Kort terras (≤ %.2fm): Alles uit 1 lengte (%dmm)', $longest_m, $best_fit_mm);
+			
+			return [
+				'by_length' => $by_length,
+				'total_qty' => (int) array_sum( $by_length ),
+				'rows'      => $rows,
+				'explain'   => implode(' | ', $explain),
+			];
 		}
 
 		// ---------------------------------------------------------
-		// KERN LOGICA: 70% Check
+		// SCENARIO 1: Zeer lang terras (> 2x langste plank)
+		// ---------------------------------------------------------
+		if ( $len_m > ( 2 * $longest_m ) ) {
+			$add( $longest_mm, $rows );
+			$rest_m = $len_m - $longest_m;
+			$explain[] = sprintf('Lengte > 2x max: 1x %dmm per rij, rest %.2fm', $longest_mm, $rest_m);
+			
+			// De rest wordt de nieuwe 'target'
+			$len_m = $rest_m; 
+			$target_mm = (int) round($len_m * 1000);
+		}
+
+		// ---------------------------------------------------------
+		// SCENARIO 2: 70/30 (of Max-Strat als 70% niet past)
 		// ---------------------------------------------------------
 		
 		$ideal_70_mm = $target_mm * 0.7;
 
-		// SITUATIE A: De ideale 70% is groter dan onze langste plank.
-		// (Bijv: 7m totaal -> 70% = 4900. Als max = 4600, dan trigger.)
-		// OF (jouw voorbeeld): 7m totaal, max = 4900. 4900 past precies, maar rest (2100) moet slim.
-		// Laten we jouw regel strikt toepassen: Als 70% >= Max lengte (of net niet passend),
-		// Dan 'Maximaliseer plank 1' en 'Optimaliseer plank 2'.
-		
+		// Als 70% groter is dan wat we hebben: Maximaliseer plank 1
 		if ( $ideal_70_mm > $longest_mm ) {
-			// Stap 1: Pak de langste plank voor het eerste deel
-			$add( $longest_mm, $rows );
 			
-			// Stap 2: Bereken overgebleven lengte
+			$add( $longest_mm, $rows );
 			$remainder_mm = $target_mm - $longest_mm;
 			
-			// Veiligheidscheck (uit je notitie): Benodigde lengte nooit groter dan plank?
-			// Als remainder > longest is, hebben we een probleem (zou door Scenario 1 afgevangen moeten zijn).
-			if ( $remainder_mm > $longest_mm ) {
-				$explain[] = 'LET OP: Reststuk is groter dan langste plank, handmatig controleren!';
+			if ( $remainder_mm > 0 ) {
+				// Probeer paren voor reststuk
+				$pair_target_m = ($remainder_mm * 2) / 1000;
+				$L_pair_mm = Calculator::ceil_length( $pair_target_m, $lengths, false );
+
+				if ( $L_pair_mm > 0 ) {
+					$qty_pairs = (int) ceil( $rows / 2 );
+					$add( $L_pair_mm, $qty_pairs );
+					$explain[] = sprintf('Max-Strat: 1x %dmm + Rest (paren in %dmm)', $longest_mm, $L_pair_mm);
+				} else {
+					$L_single_mm = Calculator::ceil_length( $remainder_mm / 1000, $lengths );
+					if ( $L_single_mm == 0 ) $L_single_mm = $longest_mm; // fallback
+
+					$add( $L_single_mm, $rows );
+					$explain[] = sprintf('Max-Strat: 1x %dmm + Rest (enkel %dmm)', $longest_mm, $L_single_mm);
+				}
 			}
 
-			// Stap 3: Optimaliseer het reststuk (Check paren)
-			// Probeer 2x het reststuk in één plank te passen (bijv 2x 2100 = 4200 -> past in 4300)
-			$pair_target_m = ($remainder_mm * 2) / 1000;
-			$L_pair_mm = Calculator::ceil_length( $pair_target_m, $lengths, false );
-
-			if ( $L_pair_mm > 0 ) {
-				// Ja, paren kan!
-				$qty_pairs = (int) ceil( $rows / 2 );
-				$add( $L_pair_mm, $qty_pairs );
-				$explain[] = sprintf(
-					'Max-Strat: 1x %dmm + Rest %dmm (x2 in %dmm -> %d stuks)',
-					$longest_mm, $remainder_mm, $L_pair_mm, $qty_pairs
-				);
-			} else {
-				// Nee, paren past niet in een voorraadlengte, pak de best passende enkele plank
-				$L_single_mm = Calculator::ceil_length( $remainder_mm / 1000, $lengths );
-				$add( $L_single_mm, $rows );
-				$explain[] = sprintf(
-					'Max-Strat: 1x %dmm + Rest %dmm (enkel in %dmm)',
-					$longest_mm, $remainder_mm, $L_single_mm
-				);
-			}
-
-		} 
-		// SITUATIE B: 70% past gewoon binnen de beschikbare lengtes (Standaard 70/30)
-		else {
+		} else {
+			// Standaard 70/30
 			$seg70 = $len_m * 0.7;
 			$seg30 = $len_m * 0.3;
 
-			// 1. Zoek plank voor 70%
 			$L70_mm = Calculator::ceil_length( $seg70, $lengths );
 			$add( $L70_mm, $rows );
 
-			// 2. Zoek plank voor 30% (eerst checken op paren)
 			$L30_pair_mm = Calculator::ceil_length( 2 * $seg30, $lengths, false );
 			
 			if ( $L30_pair_mm > 0 ) {
 				$qty_pairs = (int) ceil( $rows / 2 );
 				$add( $L30_pair_mm, $qty_pairs );
-				$explain[] = sprintf('70/30: 70%%(%dmm) + 2x30%% in %dmm', $L70_mm, $L30_pair_mm);
+				$explain[] = sprintf('70/30: 70%%(%dmm) + 2x30%% (paren %dmm)', $L70_mm, $L30_pair_mm);
 			} else {
 				$L30_direct_mm = Calculator::ceil_length( $seg30, $lengths );
 				$add( $L30_direct_mm, $rows );
@@ -338,7 +337,6 @@ class Calculator {
 		}
 
 		ksort( $by_length );
-
 		return [
 			'by_length' => $by_length,
 			'total_qty' => (int) array_sum( $by_length ),
@@ -404,17 +402,16 @@ class Calculator {
 	}
 
 	/**
-	 * Composiet-planken: twee lengtes (2900mm en 4000mm)
-	 * - < 290cm → alleen 2900
-	 * - 290–400cm → alleen 4000
-	 * - > 400cm → 70/30-regel (verhouding in aantallen)
+	 * Composiet-planken:
+	 * UPDATE 2.0:
+	 * - Als lengte <= max planklengte: gebruik 1 plank (dichtstbijzijnde).
+	 * - Anders (> max): 70/30 verdeling (standaard: 70% langste, 30% kortste).
 	 */
 	private static function calculate_composiet_planken( array $map, float $len_m, float $wid_m ): array {
 		$width_mm = (int) ( $map['width_mm'] ?? 0 );
 		$lengths  = array_keys( $map['length_variations'] ?? [] );
 		sort( $lengths );
 
-		// Veiligheidscheck
 		if ( $width_mm <= 0 || empty( $lengths ) ) {
 			return [ 'by_length' => [], 'total_qty' => 0, 'rows' => 0, 'explain' => __( 'Ongeldige composietconfiguratie.', 'hh-decking-calc' ) ];
 		}
@@ -423,38 +420,40 @@ class Calculator {
 		$row_width_m = ( $width_mm + $spacing_mm ) / 1000;
 		$rows        = (int) ceil( $wid_m / $row_width_m );
 
-		// Beschikbare lengtes
-		$len2900 = min( $lengths );
-		$len4000 = max( $lengths );
-
+		$longest_mm = end( $lengths );
+		$longest_m  = $longest_mm / 1000;
+		
 		$by_length = [];
 		$explain   = '';
 
-		// --- Case 1: terraslengte ≤ 2.9m → 2900mm
-		if ( $len_m <= 2.9 ) {
-			$by_length[$len2900] = $rows;
-			$explain = sprintf('Lengte %.2fm ≤ 2.9m → alleen %dmm × %d', $len_m, $len2900, $rows);
+		// SCENARIO 1: Past in één lengte
+		if ( $len_m <= $longest_m ) {
+			// Zoek de juiste maat (bijv 2900 of 4000)
+			$best_fit_mm = self::ceil_length( $len_m, $lengths );
+			
+			$by_length[$best_fit_mm] = $rows;
+			$explain = sprintf('Lengte %.2fm ≤ %.2fm → alleen %dmm × %d', $len_m, $longest_m, $best_fit_mm, $rows);
 		}
-
-		// --- Case 2: terraslengte ≤ 4m → 4000mm
-		elseif ( $len_m <= 4.0 ) {
-			$by_length[$len4000] = $rows;
-			$explain = sprintf('Lengte %.2fm ≤ 4.0m → alleen %dmm × %d', $len_m, $len4000, $rows);
-		}
-
-		// --- Case 3: > 4m → 70/30 verdeling
+		
+		// SCENARIO 2: Groter dan max lengte → 70/30 verdeling
 		else {
+			// Aanname bij composiet: we hebben vaak maar 2 maten (kort en lang).
+			// We gebruiken de langste voor 70% en de kortste voor 30% (paren).
+			$shortest_mm = reset( $lengths ); // kortste plank (bijv 2900)
+			
 			$seg70_m = $len_m * 0.7;
 			$seg30_m = $len_m * 0.3;
 			$explain_parts = [];
 
-			// 70% → 4000
-			$by_length[$len4000] = $rows;
-			$explain_parts[] = sprintf('70%%: %.2fm → %dmm × %d', $seg70_m, $len4000, $rows);
+			// 70% → Langste plank
+			$by_length[$longest_mm] = $rows;
+			$explain_parts[] = sprintf('70%%: %.2fm → %dmm × %d', $seg70_m, $longest_mm, $rows);
 
-			// 30% → 2900
-			$by_length[$len2900] = (int) ceil( $rows / 2 ); // paren (2×30%)
-			$explain_parts[] = sprintf('30%%: %.2fm → %dmm × %d (paren)', $seg30_m, $len2900, ceil($rows/2));
+			// 30% → Kortste plank (als paren)
+			// (Composiet is duur en strak, dus paren is voorkeur als het past)
+			$qty_pairs = (int) ceil( $rows / 2 ); 
+			$by_length[$shortest_mm] = $qty_pairs;
+			$explain_parts[] = sprintf('30%%: %.2fm → %dmm × %d (paren)', $seg30_m, $shortest_mm, $qty_pairs);
 
 			$explain = implode(' | ', $explain_parts);
 		}
@@ -550,10 +549,10 @@ class Calculator {
 
 	/**
 	 * Bereken schroeven (alleen bij hout)
-	 * - Formule: (planken × regels × 2) / 200 → ceil
-	 * - Kiest juiste variatie o.b.v. plankdikte
+	 * NIEUW: (Rijen x Regels x 2) + (Koppelingen x 2)
+	 * Koppelingen = Totaal aantal planken - Aantal rijen (ervan uitgaande dat >1 plank per rij een koppeling is).
 	 */
-	private static function calc_schroeven( int $height_mm, int $plank_qty, int $regels_qty ): ?array {
+	private static function calc_schroeven( int $height_mm, int $plank_qty, int $regels_qty, int $rows ): ?array {
 		if ( $plank_qty <= 0 || $regels_qty <= 0 ) {
 			return null;
 		}
@@ -575,8 +574,21 @@ class Calculator {
 			return null;
 		}
 
-		// Berekening: (planken × regels × 2) / 200 → aantal dozen
-		$dozen = (int) ceil( ( $plank_qty * $regels_qty * 2 ) / 200 );
+		// Berekening:
+		// 1. Basis kruisingen: aantal rijen (breedte) x aantal regels (onder) x 2 schroeven
+		$base_screws = ( $rows * $regels_qty ) * 2;
+
+		// 2. Koppelingen: Als er meer planken zijn dan rijen, zijn er koppelingen.
+		// Elk 'extra' plankdeel betekent 1 koppeling.
+		// Bij een koppeling (stuiknaad) komen 2 extra schroeven (dus 4 op die regel ipv 2).
+		// We tellen er dus 2 bij op per koppeling.
+		$joints = max( 0, $plank_qty - $rows );
+		$joint_screws = $joints * 2;
+
+		$total_screws = $base_screws + $joint_screws;
+		
+		// 200 per doos
+		$dozen = (int) ceil( $total_screws / 200 );
 
 		return [
 			'qty'           => $dozen,
@@ -584,20 +596,20 @@ class Calculator {
 			'variation_id'  => (int) $variation_id,
 			'label'         => $cfg['label'] ?? 'Schroeven',
 			'_hh_dc_summary'=> sprintf(
-				'%s — %d doos/dozen (%s, %d× planken × %d× regels)',
+				'%s — %d doos/dozen (%s, totaal %d schroeven: %d basis + %d koppeling)',
 				$cfg['label'] ?? 'Schroeven',
 				$dozen,
 				$variation_key,
-				$plank_qty,
-				$regels_qty
+				$total_screws,
+				$base_screws,
+				$joint_screws
 			),
 		];
 	}
 
 	/**
 	 * Bereken slotbouten (alleen bij tuin/piketpalen)
-	 * - Formule: ceil(palen / 25)
-	 * - Lengte = regelhoogte + paalmaat + 15mm (afgerond op cm)
+	 * NIEUW: Paaldikte + Regeldikte + 15mm -> Dichtstbijzijnde maat.
 	 */
 	private static function calc_slotbouten( int $palen_qty, string $regel_label, string $pole_size ): ?array {
 		if ( $palen_qty <= 0 ) {
@@ -609,12 +621,21 @@ class Calculator {
 			return null;
 		}
 
-		// Simpele lengteafleiding: 4.5cm regel + paalmaat (40 of 50mm) + 15mm marge
-		$regel_mm = (stripos($regel_label, '70') !== false) ? 70 : 60; // grove afleiding
-		$paal_mm  = (strpos($pole_size, '50') !== false) ? 50 : 40;
-		$lengte_mm = $regel_mm + $paal_mm + 15;
-		$lengte_cm = round($lengte_mm / 10); // afronden op cm
+		// Bepaal afmetingen uit strings (grove aanname op basis van productnamen)
+		// Piketpaal "40x40" -> 40, "50x50" -> 50
+		$paal_mm = (strpos($pole_size, '50') !== false) ? 50 : 40;
 
+		// Regel "40x60" -> 40, "44x70" -> 44 (We zoeken de dikte die gebout wordt)
+		// We checken op '44' in de naam, anders 40 (fallback).
+		$regel_mm = (strpos($regel_label, '44') !== false) ? 44 : 40;
+
+		// Formule: Paal + Regel + 15mm
+		$benodigde_lengte_mm = $paal_mm + $regel_mm + 15;
+
+		// Afronden naar dichtstbijzijnde maat (bijv 10-tallen: 95->100, 109->110)
+		// ceil(95/10)*10 = 100.
+		$lengte_mm = (int) (ceil($benodigde_lengte_mm / 10) * 10);
+		
 		// 25 per doos
 		$dozen = (int) ceil( $palen_qty / 25 );
 
@@ -623,11 +644,12 @@ class Calculator {
 			'product_id' => (int) ($cfg['product_id'] ?? 0),
 			'label'      => $cfg['label'] ?? 'Slotbouten',
 			'_hh_dc_summary' => sprintf(
-				'%s — %d doos/dozen (%dmm ≈ %dcm, %d palen)',
+				'%s — %d doos/dozen (%dmm [paal %d+regel %d+15], %d palen)',
 				$cfg['label'] ?? 'Slotbouten',
 				$dozen,
 				$lengte_mm,
-				$lengte_cm,
+				$paal_mm,
+				$regel_mm,
 				$palen_qty
 			),
 		];
@@ -635,54 +657,61 @@ class Calculator {
 
 	/**
 	 * Bereken clips (bamboe & composiet)
-	 * - Startclips: 1 per rij regels
-	 * - Eindclips: idem
-	 * - Tussenclips: (planken × regels × 2) / 200 → ceil
+	 * NIEUW: 
+	 * - Visgraat: (Planken * 4) / 100
+	 * - Anders: Rijen * Regels (Basis clips) / 100 (of verpakkingsgrootte)
 	 */
-	private static function calc_clips( int $plank_qty, int $regels_qty ): array {
+	private static function calc_clips( int $plank_qty, int $regels_qty, int $rows, string $subtype ): array {
 		$out = [];
+		
+		// Verpakkingsgrootte (standaard 100 in je voorbeeld, pas aan in config indien nodig)
+		$pack_size = 100; 
 
-		$cfg_start  = CONFIG['accessories']['startclips'] ?? null;
-		$cfg_end    = CONFIG['accessories']['eindclips'] ?? null;
 		$cfg_middle = CONFIG['accessories']['tussenclips'] ?? null;
+		$cfg_start  = CONFIG['accessories']['startclips'] ?? null; // Startclips vaak wel nodig
+		
+		// 1. Tussenclips / Montageclips
+		if ( $cfg_middle && ! empty( $cfg_middle['product_id'] ) ) {
+			
+			if ( $subtype === 'visgraat' ) {
+				// Formule Visgraat: (aantal planken x 4) / 100
+				$total_clips = $plank_qty * 4;
+				$dozen = (int) ceil( $total_clips / $pack_size );
+				$summary = sprintf('Visgraat clips: %d planken x 4 = %d stuks', $plank_qty, $total_clips);
+			} else {
+				// Formule Standaard (Bamboe/Composiet): "Zelfde als schroeven" -> 1 clip per kruising
+				// (Rijen x Regels)
+				$total_clips = $rows * $regels_qty;
+				$dozen = (int) ceil( $total_clips / $pack_size );
+				$summary = sprintf('Clips: %d rijen x %d regels = %d stuks', $rows, $regels_qty, $total_clips);
+			}
 
-		// --- Startclips
-		if ( $cfg_start && ! empty( $cfg_start['product_id'] ) ) {
+			$out[] = [
+				'product_id' => (int) $cfg_middle['product_id'],
+				'qty'        => $dozen,
+				'_hh_dc_summary' => sprintf(
+					'%s — %d doos/dozen (%s)',
+					$cfg_middle['label'] ?? 'Tussenclips',
+					$dozen,
+					$summary
+				),
+			];
+		}
+
+		// 2. Startclips (Optioneel, vaak 1 per rij)
+		// Als je dit ook wilt schalen zoals schroeven, laat het weten. 
+		// Voor nu behouden we de "1 per regel" logica uit de oude set of zetten we het uit als het in "Clips" totaal zit.
+		// In je beschrijving zeg je "Zelfde als schroeven alleen andere aantallen". 
+		// Vaak zijn startclips apart. Ik laat ze staan zoals ze waren (1 per regel) tenzij je ze weg wilt.
+		if ( $cfg_start && ! empty( $cfg_start['product_id'] ) && $subtype !== 'visgraat' ) {
+			// Startclips zijn meestal niet per doos van 100 maar per stuk of klein zakje? 
+			// Ik laat de oude logica even staan (aantal = aantal regels).
 			$out[] = [
 				'product_id' => (int) $cfg_start['product_id'],
 				'qty'        => $regels_qty,
 				'_hh_dc_summary' => sprintf(
 					'%s — %d stuks (1 per regel)',
 					$cfg_start['label'] ?? 'Startclips',
-					$regels_qty
-				),
-			];
-		}
-
-		// --- Eindclips
-		if ( $cfg_end && ! empty( $cfg_end['product_id'] ) ) {
-			$out[] = [
-				'product_id' => (int) $cfg_end['product_id'],
-				'qty'        => $regels_qty,
-				'_hh_dc_summary' => sprintf(
-					'%s — %d stuks (1 per regel)',
-					$cfg_end['label'] ?? 'Eindclips',
-					$regels_qty
-				),
-			];
-		}
-
-		// --- Tussenclips
-		if ( $cfg_middle && ! empty( $cfg_middle['product_id'] ) ) {
-			$dozen = (int) ceil( ( $plank_qty * $regels_qty * 2 ) / 200 );
-			$out[] = [
-				'product_id' => (int) $cfg_middle['product_id'],
-				'qty'        => $dozen,
-				'_hh_dc_summary' => sprintf(
-					'%s — %d doos/dozen (%d× planken × %d× regels)',
-					$cfg_middle['label'] ?? 'Tussenclips',
-					$dozen,
-					$plank_qty,
 					$regels_qty
 				),
 			];
