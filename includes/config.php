@@ -270,6 +270,36 @@ const CONFIG = [
 			'thick_mm'  => 18,
 			'product'   => 3791,
 		],
+
+		// =========================
+		// REGELS (balkon)
+		// =========================
+
+		'regel_douglas_44x70' => [
+			'type'      => 'hout',
+			'subtype'   => 'regel_douglas',
+			'label'     => 'Douglas Regel 44x70',
+			'width_mm'  => 44,
+			'thick_mm'  => 70,
+			'product'   => 964, // TODO: vul hoofdproduct-id in
+			'length_variations' => [
+				// TODO: vul lengte_in_mm => variation_id in op basis van de 4 variaties
+				2500 => 3936,
+				3000 => 965,
+				4000 => 973,
+				5000 => 3935,
+			],
+		],
+
+		'regel_hhline_25x40' => [
+			'type'      => 'composiet',
+			'subtype'   => 'regel_hhline',
+			'label'     => 'HHLine Regel 25x40',
+			'width_mm'  => 40,
+			'thick_mm'  => 25,
+			'product'   => 2857,
+			'product_length_mm' => 2200, // vaste lengte 2200mm (info voor jezelf / evt. latere logica)
+		],
 	],
 
 	// Accessoires doen we later (op basis van Excel-regels)

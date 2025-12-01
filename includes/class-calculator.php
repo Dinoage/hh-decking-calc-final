@@ -141,7 +141,7 @@ class Calculator {
 
 		// === Accessoires stap 1: REGELS ===
 		$poles = sanitize_key( $input['poles'] ?? 'none' ); // "with" of "none"
-		$regels = self::calc_regels( $len_m, $type, $poles );
+		$regels = self::calc_regels( $len_m, $type, $map, $poles );
 
 		if ( $regels ) {
 			$lines[] = [
@@ -471,48 +471,106 @@ class Calculator {
 	/**
 	 * Bereken aantal regels (onderconstructie)
 	 * - Formule: ceil(lengte / 0.5) + 1
-	 * - Kiest juiste product-ID obv materiaal en "poles" (met of zonder piketpalen)
+	 * - Logica:
+	 *   - TUIN (poles = 'with')  → Altijd Bangkirai regel (hardhoutregel).
+	 *   - BALKON + hout (douglas planken) → Douglas regel 44x70.
+	 *   - BALKON + composiet → HHLine regel 25x40 (2200mm).
+	 *   - Fallback → oude accessoires-logica.
 	 */
-	private static function calc_regels( float $len_m, string $type, string $poles ): ?array {
+	private static function calc_regels( float $len_m, string $type, array $map, string $poles ): ?array {
 		if ( $len_m <= 0 ) {
 			return null;
 		}
 
-		$regels_qty = (int) ceil( $len_m / 0.5 ) + 1; // elke 50 cm + 1 extra
+		// Basisformule: elke 50 cm + 1 extra
+		$regels_qty = (int) ceil( $len_m / 0.5 ) + 1;
 
+		// 1. TUIN / MET PIKETPALEN → Altijd Bangkirai-regel (hardhout)
+		if ( $poles === 'with' ) {
+			$acc_cfg = CONFIG['accessories']['regels'] ?? null;
+			if ( ! $acc_cfg || empty( $acc_cfg['product_ids'] ) ) {
+				return null;
+			}
+
+			// Bangkirai-regel = eerste product_id (4205)
+			$product_id = $acc_cfg['product_ids'][0] ?? reset( $acc_cfg['product_ids'] );
+
+			return [
+				'qty'        => $regels_qty,
+				'product_id' => (int) $product_id,
+				'label'      => 'Bangkirai regel 40x60',
+				'_hh_dc_summary' => sprintf(
+					'Regels: %d stuks — Bangkirai (tuin/piketpalen)',
+					$regels_qty
+				),
+			];
+		}
+
+		// Vanaf hier: BALKON (geen piketpalen)
+		$subtype_map = $map['subtype'] ?? '';
+
+		// 2. BALKON + DOUGLAS → Douglas regel (variabel product)
+		if ( $type === 'hout' && $subtype_map === 'douglas' && isset( CONFIG['mappings']['regel_douglas_44x70'] ) ) {
+			$regel_cfg = CONFIG['mappings']['regel_douglas_44x70'];
+
+			return [
+				'qty'        => $regels_qty,
+				'product_id' => (int) $regel_cfg['product'],
+				'label'      => $regel_cfg['label'],
+				'_hh_dc_summary' => sprintf(
+					'Regels: %d stuks — %s (balkon)',
+					$regels_qty,
+					$regel_cfg['label']
+				),
+			];
+		}
+
+		// 3. BALKON + COMPOSIET → HHLine regel 25x40 (simpel product)
+		if ( $type === 'composiet' && isset( CONFIG['mappings']['regel_hhline_25x40'] ) ) {
+			$regel_cfg = CONFIG['mappings']['regel_hhline_25x40'];
+
+			return [
+				'qty'        => $regels_qty,
+				'product_id' => (int) $regel_cfg['product'],
+				'label'      => $regel_cfg['label'],
+				'_hh_dc_summary' => sprintf(
+					'Regels: %d stuks — %s (balkon, 2200mm)',
+					$regels_qty,
+					$regel_cfg['label']
+				),
+			];
+		}
+
+		// 4. Fallback: oude accessoires-logica (bijv. andere houtsoorten/bamboe)
 		$cfg = CONFIG['accessories']['regels'] ?? null;
 		if ( ! $cfg || empty( $cfg['product_ids'] ) ) {
 			return null;
 		}
 
-		// poles = "with" → tuin (altijd hardhoutregels)
-		// poles = "none" → balkon → zelfde materiaal als planken
-		if ( $poles === 'with' ) {
-			// Hardhout-regels (tweede ID)
-			$product_id = $cfg['product_ids'][1] ?? reset( $cfg['product_ids'] );
-			$label_ctx  = 'Hardhout (tuin)';
-		} else {
-			switch ( $type ) {
-				case 'hout':
-					$product_id = $cfg['product_ids'][1] ?? reset( $cfg['product_ids'] ); // hardhoutregel
-					$label_ctx  = 'Hardhout (balkon)';
-					break;
-				case 'bamboe':
-				case 'composiet':
-					$product_id = $cfg['product_ids'][0] ?? reset( $cfg['product_ids'] ); // douglas/composietregel
-					$label_ctx  = ucfirst( $type ) . ' (balkon)';
-					break;
-				default:
-					$product_id = reset( $cfg['product_ids'] );
-					$label_ctx  = ucfirst( $type );
-			}
+		switch ( $type ) {
+			case 'hout':
+				$product_id = $cfg['product_ids'][1] ?? reset( $cfg['product_ids'] ); // hardhoutregel
+				$label_ctx  = 'Hardhout (balkon)';
+				break;
+			case 'bamboe':
+			case 'composiet':
+				$product_id = $cfg['product_ids'][0] ?? reset( $cfg['product_ids'] );
+				$label_ctx  = ucfirst( $type ) . ' (balkon)';
+				break;
+			default:
+				$product_id = reset( $cfg['product_ids'] );
+				$label_ctx  = ucfirst( $type );
 		}
 
 		return [
 			'qty'        => $regels_qty,
 			'product_id' => (int) $product_id,
 			'label'      => $cfg['label'] ?? 'Regels',
-			'_hh_dc_summary' => sprintf( 'Regels: %d stuks — %s', $regels_qty, $label_ctx ),
+			'_hh_dc_summary' => sprintf(
+				'Regels: %d stuks — %s',
+				$regels_qty,
+				$label_ctx
+			),
 		];
 	}
 
