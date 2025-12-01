@@ -319,7 +319,7 @@ const CONFIG = [
 	'regels' => [
 		'label'       => 'Regels',
 		'product_ids' => [
-			4205, // Bangkirai verlijmd 40x60mm
+			4206, // Bangkirai verlijmd 40x60mm
 			1064, // Angelim Vermelho 44x70mm Geschaafd
 		],
 		'applicable'  => ['hout', 'bamboe', 'composiet'],

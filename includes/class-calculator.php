@@ -242,16 +242,20 @@ class Calculator {
 
 		// === Accessoires stap 1: REGELS ===
 		$poles = sanitize_key( $input['poles'] ?? 'none' ); // "with" of "none"
-		$regels = self::calc_regels( $len_m, $type, $map, $poles );
+		// UPDATE: geef ook wid_m mee om lengtes te berekenen
+		$regels = self::calc_regels( $len_m, $wid_m, $type, $map, $poles );
 
 		if ( $regels ) {
+			$is_variation = !empty($regels['variation_id']) && $regels['variation_id'] > 0;
+			
 			$lines[] = [
-				'type'       => 'simple',
+				'type'       => $is_variation ? 'variation' : 'simple',
 				'product_id' => $regels['product_id'],
+				'variation_id' => $is_variation ? $regels['variation_id'] : 0,
 				'qty'        => $regels['qty'],
-				'image'      => self::get_image_url( $regels['product_id'] ),
-				'title'      => $regels['label'],
-				'cutting_note' => 'Onderconstructie (om de 40 à 50cm h.o.h.).',
+				'image'      => self::get_image_url( $is_variation ? $regels['variation_id'] : $regels['product_id'] ),
+				'title'      => $regels['label'] . ($is_variation && !strpos($regels['label'], (string)$regels['label_suffix']) ? ' (' . $regels['label_suffix'] . ')' : ''),
+				'cutting_note' => $regels['cutting_note'] ?? 'Onderconstructie (h.o.h. 50cm).',
 				'meta'       => [ '_hh_dc_summary' => $regels['_hh_dc_summary'] ],
 			];
 		}
@@ -259,7 +263,12 @@ class Calculator {
 		// === Accessoires stap 2: PIKETPALEN ===
 		$palen = null;
 		if ( $poles === 'with' && ! empty( $regels ) ) {
-			$palen = self::calc_piketpalen( $regels['qty'], $wid_m, $poleSize );
+			// Let op: voor de palenberekening hebben we aantal RIJEN nodig, niet aantal balken.
+			// Die zit nog in $regels['rows_info'] (als we die returnen) of we rekenen opnieuw.
+			// Eenvoudiger: bereken aantal rijen opnieuw hier lokaal, want calc_regels geeft nu stuks terug.
+			$row_count = (int) ceil( $len_m / 0.5 ) + 1;
+			
+			$palen = self::calc_piketpalen( $row_count, $wid_m, $poleSize );
 
 			if ( $palen ) {
 				$lines[] = [
@@ -276,7 +285,8 @@ class Calculator {
 
 		// === Accessoires stap 3: SCHROEVEN (Hout) ===
 		if ( $type === 'hout' && ! empty( $regels ) && $total_planks_qty > 0 ) {
-			$schroeven = self::calc_schroeven( $height, $total_planks_qty, $regels['qty'], $total_rows );
+			$regels_count_for_screws = (int) ceil( $len_m / 0.5 ) + 1; // Aantal rijen is leidend voor kruisingen
+			$schroeven = self::calc_schroeven( $height, $total_planks_qty, $regels_count_for_screws, $total_rows );
 
 			if ( $schroeven ) {
 				$total_screws_info = $schroeven['total_items'] ?? 0;
@@ -316,7 +326,8 @@ class Calculator {
 		
 		// === Accessoires stap 5: CLIPS (Bamboe & Composiet) ===
 		if ( in_array( $type, ['bamboe', 'composiet'], true ) && ! empty( $regels ) && $total_planks_qty > 0 ) {
-			$clips = self::calc_clips( $total_planks_qty, $regels['qty'], $total_rows, $subtype );
+			$regels_count_for_clips = (int) ceil( $len_m / 0.5 ) + 1;
+			$clips = self::calc_clips( $total_planks_qty, $regels_count_for_clips, $total_rows, $subtype );
 
 			foreach ( $clips as $clip ) {
 				$total_clips = $clip['total_items'] ?? 0;
@@ -552,32 +563,112 @@ class Calculator {
 		];
 	}
 
-	private static function calc_regels( float $len_m, string $type, array $map, string $poles ): ?array {
+	/**
+	 * Berekening regels (onderbalken)
+	 * UPDATE: Nu op basis van strekkende meters en specifieke balklengtes.
+	 */
+	private static function calc_regels( float $len_m, float $wid_m, string $type, array $map, string $poles ): ?array {
 		if ( $len_m <= 0 ) return null;
-		$regels_qty = (int) ceil( $len_m / 0.5 ) + 1;
+		
+		// 1. Aantal rijen (50cm h.o.h.)
+		$rows = (int) ceil( $len_m / 0.5 ) + 1;
+		
+		// 2. Strekkende meters totaal
+		$total_linear_m = $rows * $wid_m;
+		
+		// 3. Toevoegen waste (10% voor overlappingen en zaagverlies)
+		$required_m = $total_linear_m * 1.10;
 
+		// 4. Bepaal product & balklengte
+		$beam_len_m = 0;
+		$product_id = 0;
+		$variation_id = 0;
+		$label = '';
+		$label_suffix = '';
+
+		// SCENARIO A: TUIN (Met palen) -> Altijd Hardhout (Bangkirai)
 		if ( $poles === 'with' ) {
 			$acc_cfg = CONFIG['accessories']['regels'] ?? null;
-			$product_id = $acc_cfg['product_ids'][0] ?? 0;
-			return ['qty' => $regels_qty, 'product_id' => (int) $product_id, 'label' => 'Bangkirai regel 40x60', '_hh_dc_summary' => sprintf('Regels: %d stuks — Bangkirai (tuin/piketpalen)', $regels_qty)];
+			$product_id = $acc_cfg['product_ids'][0] ?? 0; // Bangkirai 40x60
+			$label = 'Bangkirai regel 40x60';
+			$beam_len_m = 3.90; // Zoals aangegeven: 3900mm
+			$label_suffix = '3900mm';
 		}
-
-		$subtype_map = $map['subtype'] ?? '';
-		if ( $type === 'hout' && $subtype_map === 'douglas' && isset( CONFIG['mappings']['regel_douglas_44x70'] ) ) {
-			$regel_cfg = CONFIG['mappings']['regel_douglas_44x70'];
-			return ['qty' => $regels_qty, 'product_id' => (int) $regel_cfg['product'], 'label' => $regel_cfg['label'], '_hh_dc_summary' => sprintf('Regels: %d stuks — %s (balkon)', $regels_qty, $regel_cfg['label'])];
-		}
-		if ( $type === 'composiet' && isset( CONFIG['mappings']['regel_hhline_25x40'] ) ) {
+		// SCENARIO B: BALKON (Composiet) -> HHLine Regel
+		elseif ( $type === 'composiet' && isset( CONFIG['mappings']['regel_hhline_25x40'] ) ) {
 			$regel_cfg = CONFIG['mappings']['regel_hhline_25x40'];
-			return ['qty' => $regels_qty, 'product_id' => (int) $regel_cfg['product'], 'label' => $regel_cfg['label'], '_hh_dc_summary' => sprintf('Regels: %d stuks — %s (balkon, 2200mm)', $regels_qty, $regel_cfg['label'])];
+			$product_id = (int) $regel_cfg['product'];
+			$label = $regel_cfg['label'];
+			$beam_len_m = 2.20; // 2200mm volgens config
+			$label_suffix = '2200mm';
+		}
+		// SCENARIO C: BALKON (Douglas) -- BEST FIT LOGICA
+		elseif ( $type === 'hout' && ($map['subtype'] ?? '') === 'douglas' && isset( CONFIG['mappings']['regel_douglas_44x70'] ) ) {
+			$regel_cfg = CONFIG['mappings']['regel_douglas_44x70'];
+			$product_id = (int) $regel_cfg['product'];
+			$label = $regel_cfg['label'];
+
+			// Best fit: zoek kleinste lengte die >= terrasbreedte ($wid_m) is.
+			$available_lengths = array_keys($regel_cfg['length_variations'] ?? []);
+			sort($available_lengths); // 2500, 3000, 4000, 5000 (mm)
+
+			$best_len_mm = 0;
+			$target_mm = (int) round($wid_m * 1000);
+
+			foreach($available_lengths as $l) {
+				if ($l >= $target_mm) {
+					$best_len_mm = $l;
+					break;
+				}
+			}
+
+			// Als het terras breder is dan de langste balk (5000mm), pak dan de langste.
+			if ($best_len_mm === 0 && !empty($available_lengths)) {
+				$best_len_mm = end($available_lengths);
+			}
+
+			// Geen variaties gevonden? Fallback naar 4000
+			if ($best_len_mm > 0) {
+				$beam_len_m = $best_len_mm / 1000;
+				$label_suffix = $best_len_mm . 'mm';
+				// Set variation ID als die bestaat
+				$variation_id = $regel_cfg['length_variations'][$best_len_mm] ?? 0;
+			} else {
+				$beam_len_m = 4.00; 
+				$label_suffix = '4000mm';
+			}
+		}
+		// SCENARIO D: FALLBACK (Anders) -> Hardhout (Angelim of Bangkirai)
+		else {
+			$cfg = CONFIG['accessories']['regels'] ?? null;
+			if ( ! $cfg || empty( $cfg['product_ids'] ) ) return null;
+			
+			// Als type hout is pakken we 2e optie (Angelim), anders 1e (Bangkirai)
+			$product_id = match($type) { 'hout' => $cfg['product_ids'][1] ?? $cfg['product_ids'][0], default => $cfg['product_ids'][0] };
+			$label = $cfg['label'] ?? 'Regels';
+			
+			// Hardhout lengte aanname (zoals Bangkirai)
+			$beam_len_m = 3.90;
+			$label_suffix = '3900mm';
 		}
 
-		$cfg = CONFIG['accessories']['regels'] ?? null;
-		if ( ! $cfg || empty( $cfg['product_ids'] ) ) return null;
-		
-		// Fallback logic
-		$product_id = match($type) { 'hout' => $cfg['product_ids'][1] ?? $cfg['product_ids'][0], default => $cfg['product_ids'][0] };
-		return ['qty' => $regels_qty, 'product_id' => (int) $product_id, 'label' => $cfg['label'] ?? 'Regels', '_hh_dc_summary' => sprintf('Regels: %d stuks', $regels_qty)];
+		if ( $beam_len_m <= 0 ) return null;
+
+		// 5. Bereken aantal stuks
+		$qty = (int) ceil( $required_m / $beam_len_m );
+
+		return [
+			'qty'            => $qty,
+			'product_id'     => (int) $product_id,
+			'variation_id'   => (int) $variation_id,
+			'label'          => $label,
+			'label_suffix'   => $label_suffix, // return suffix voor display
+			'cutting_note'   => sprintf(
+				'<strong>Berekend:</strong> %d rijen van %.2fm breed. Totaal %.1f m¹ (incl 10%% zaagverlies). Advies: %d stuks van %s.',
+				$rows, $wid_m, $required_m, $qty, $label_suffix
+			),
+			'_hh_dc_summary' => sprintf('Regels: %d stuks (%s) — Totaal %.1f m¹', $qty, $label_suffix, $required_m)
+		];
 	}
 
 	private static function calc_piketpalen( int $regels_qty, float $wid_m, string $pole_size ): ?array {
