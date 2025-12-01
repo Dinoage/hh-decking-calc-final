@@ -42,12 +42,12 @@ class Calculator {
 		$total_rows = 0;
 
 		// =========================================================
-		// CASE A: Tegels (NIEUW)
+		// CASE A: Tegels
 		// =========================================================
 		if ( $subtype === 'tegel' ) {
 			// Formule: Totale m2 / 0.54 -> afronden naar boven = aantal pakken
 			$m2_per_pack = 0.54;
-			$tiles_per_pack = 6; // INFO: 6 tegels per pak
+			$tiles_per_pack = 6; 
 
 			$packs_needed = (int) ceil( $surface_m2 / $m2_per_pack );
 			
@@ -72,8 +72,7 @@ class Calculator {
 				],
 			];
 
-			// Tegels hebben meestal geen regels/schroeven nodig in deze calculator context (balkon),
-			// tenzij er tegeldragers worden toegevoegd. Voor nu returnen we hier.
+			// Tegels hebben meestal geen regels/schroeven nodig in deze calculator context (balkon)
 			return [
 				'surface_m2' => $surface_m2,
 				'lines'      => $lines,
@@ -123,32 +122,25 @@ class Calculator {
 
 			// --- SUB-CASE: Visgraat ---
 			if ( $subtype === 'visgraat' ) {
-				// 1. Bepaal waste percentage
 				// < 15 m2 = 5%, >= 15 m2 = 3%
 				$waste_multiplier = ( $surface_m2 < 15 ) ? 1.05 : 1.03;
 
-				// 2. Afmetingen plank
 				$b_width_mm = (int) ( $map['width_mm'] ?? 140 );
-				// Gebruik product_length_mm uit config, of fallback naar 700mm (standaard visgraat)
 				$b_length_mm = (int) ( $map['product_length_mm'] ?? 700 ); 
 
 				$b_width_m  = $b_width_mm / 1000;
 				$b_length_m = $b_length_mm / 1000;
 				
-				// Oppervlakte van 1 plank
 				$plank_m2 = $b_width_m * $b_length_m;
 
 				if ( $plank_m2 <= 0 ) {
 					return [ 'error' => __( 'Kon plankoppervlakte niet berekenen voor visgraat.', 'hh-decking-calc' ) ];
 				}
 
-				// 3. Berekening: (Totale m2 / Plank m2) * waste -> afronden
 				$raw_qty = $surface_m2 / $plank_m2;
 				$total_qty = (int) ceil( $raw_qty * $waste_multiplier );
 
 				$total_planks_qty = $total_qty;
-				// Visgraat heeft geen 'rijen' in de traditionele zin voor clips, 
-				// maar we zetten rows op 0 om verwarring bij andere berekeningen te voorkomen.
 				$total_rows = 0; 
 
 				$waste_txt = ( $surface_m2 < 15 ) ? '5%' : '3%';
@@ -291,7 +283,6 @@ class Calculator {
 		}
 		
 		// === Accessoires stap 5: CLIPS (Bamboe & Composiet) ===
-		// Visgraat = planken x 4. Anders basis clips (rijen x regels).
 		if ( in_array( $type, ['bamboe', 'composiet'], true ) && ! empty( $regels ) && $total_planks_qty > 0 ) {
 			$clips = self::calc_clips( $total_planks_qty, $regels['qty'], $total_rows, $subtype );
 
@@ -564,12 +555,46 @@ class Calculator {
 		return ['qty' => $dozen, 'product_id' => (int) $cfg['product_id'], 'variation_id' => (int) $variation_id, 'label' => $cfg['label'], '_hh_dc_summary'=> sprintf('%s — %d doos/dozen (%s)', $cfg['label'], $dozen, $variation_key)];
 	}
 
+	/**
+	 * Bereken slotbouten (alleen bij tuin/piketpalen)
+	 * UPDATE: Altijd uitgaan van dikste regel (45mm) voor veiligheid en eenvoud.
+	 */
 	private static function calc_slotbouten( int $palen_qty, string $regel_label, string $pole_size ): ?array {
 		if ( $palen_qty <= 0 ) return null;
 		$cfg = CONFIG['accessories']['slotbouten'] ?? null;
 		if ( ! $cfg ) return null;
+
+		// Bepaal afmetingen
+		// Piketpaal "40x40" -> 40, "50x50" -> 50
+		$paal_mm = (strpos($pole_size, '50') !== false) ? 50 : 40;
+
+		// Regel: We gaan altijd uit van de dikste maat (Angelim = 44mm -> pak 45mm voor veiligheid) 
+		// om altijd uit te komen met de boutlengte, ongeacht welk type hout er gekozen is.
+		$regel_mm = 45; 
+
+		// Formule: Paal + Regel + 15mm (moer/ring/buffer)
+		$benodigde_lengte_mm = $paal_mm + $regel_mm + 15;
+
+		// Afronden naar dichtstbijzijnde maat (bijv 10-tallen: 95->100, 109->110)
+		$lengte_mm = (int) (ceil($benodigde_lengte_mm / 10) * 10);
+		
+		// 25 per doos
 		$dozen = (int) ceil( $palen_qty / 25 );
-		return ['qty' => $dozen, 'product_id' => (int) ($cfg['product_id'] ?? 0), 'label' => $cfg['label'], '_hh_dc_summary' => sprintf('%s — %d doos/dozen', $cfg['label'], $dozen)];
+
+		return [
+			'qty'        => $dozen,
+			'product_id' => (int) ($cfg['product_id'] ?? 0),
+			'label'      => $cfg['label'] ?? 'Slotbouten',
+			'_hh_dc_summary' => sprintf(
+				'%s — %d doos/dozen (%dmm [paal %d+regel %d+15], %d palen)',
+				$cfg['label'] ?? 'Slotbouten',
+				$dozen,
+				$lengte_mm,
+				$paal_mm,
+				$regel_mm,
+				$palen_qty
+			),
+		];
 	}
 
 	private static function calc_clips( int $plank_qty, int $regels_qty, int $rows, string $subtype ): array {
@@ -614,9 +639,12 @@ class Calculator {
 
 		$out = [];
 
-		// TODO: Pas deze ID's aan naar de echte Product ID's in WooCommerce
-		$id_075 = 999075; // Saicos Decking Oil 0.75L Kleurloos
-		$id_250 = 999250; // Saicos Decking Oil 2.5L Kleurloos
+		// LET OP: Dit zijn placeholder ID's voor de "verborgen" producten.
+		// Maak twee simpele (hidden) producten aan in WooCommerce:
+		// 1. Saicos Decking Oil 0.75L Kleurloos -> Vul ID hieronder in
+		// 2. Saicos Decking Oil 2.5L Kleurloos  -> Vul ID hieronder in
+		$id_075 = 999075; 
+		$id_250 = 999250; 
 
 		if ( $large_qty > 0 ) {
 			$out[] = [
@@ -625,7 +653,7 @@ class Calculator {
 				'_hh_dc_summary' => sprintf(
 					__( 'Saicos Decking Oil (2,5L) — %d pot(ten) (optimaal voor ca. %d m²)', 'hh-decking-calc' ),
 					$large_qty,
-					$large_qty * 3 * 15 // ruwe schatting dekking
+					$large_qty * 3 * 15 
 				),
 			];
 		}
