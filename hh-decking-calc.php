@@ -28,7 +28,6 @@ use HH\DeckingCalc\Calculator;
  * Assets.
  */
 function hh_dc_enqueue_assets() {
-	// Alleen waar shortcode staat (basic check).
 	if ( ! is_singular() ) {
 		return;
 	}
@@ -62,7 +61,7 @@ function hh_dc_enqueue_assets() {
 			),
 			'config' => array(
 				'wastePercent' => \HH\DeckingCalc\CONFIG['defaults']['waste_percent'],
-				'mappings'     => \HH\DeckingCalc\CONFIG['mappings'], // 🔑 hele mapping naar JS
+				'mappings'     => \HH\DeckingCalc\CONFIG['mappings'],
 			),
 		)
 	);
@@ -120,26 +119,26 @@ function hh_dc_shortcode() {
 			</div>
 
 			<!-- Stap 2b: plaatsing -->
-			<div class="hh-dc-step">
-			<label for="dc-poles"><?php esc_html_e('Plaatsing', 'hh-decking-calc'); ?></label>
-			<select id="dc-poles" name="poles" required>
-				<option value="none"><?php esc_html_e('Zonder piketpalen (balkon)', 'hh-decking-calc'); ?></option>
-				<option value="with"><?php esc_html_e('Met piketpalen (tuin)', 'hh-decking-calc'); ?></option>
-			</select>
+			<div id="dc-poles-row" class="hh-dc-step">
+				<label for="dc-poles"><?php esc_html_e('Plaatsing', 'hh-decking-calc'); ?></label>
+				<select id="dc-poles" name="poles" required>
+					<option value="none"><?php esc_html_e('Zonder piketpalen (balkon)', 'hh-decking-calc'); ?></option>
+					<option value="with"><?php esc_html_e('Met piketpalen (tuin)', 'hh-decking-calc'); ?></option>
+				</select>
 			</div>
 
 			<!-- Alleen tonen bij "met piketpalen" -->
 			<div id="dc-pole-size-row" class="hh-dc-step" style="display:none;">
-			<label for="dc-pole-size"><?php esc_html_e('Maat piketpaal', 'hh-decking-calc'); ?></label>
-			<select id="dc-pole-size" name="pole_size">
-				<option value="40x40">40 × 40 mm</option>
-				<option value="50x50">50 × 50 mm</option>
-			</select>
+				<label for="dc-pole-size"><?php esc_html_e('Maat piketpaal', 'hh-decking-calc'); ?></label>
+				<select id="dc-pole-size" name="pole_size">
+					<option value="40x40">40 × 40 mm</option>
+					<option value="50x50">50 × 50 mm</option>
+				</select>
 			</div>
 
 
 			<!-- Stap 3: hoogte -->
-			<div class="hh-dc-step">
+			<div id="dc-height-row" class="hh-dc-step">
 				<label for="dc-height"><?php esc_html_e( 'Hoogte plank (mm)', 'hh-decking-calc' ); ?></label>
 				<select id="dc-height" name="height" required>
 					<option value=""><?php esc_html_e( 'Kies…', 'hh-decking-calc' ); ?></option>
@@ -177,9 +176,6 @@ function hh_dc_shortcode() {
 }
 add_shortcode( 'hh_decking_calculator', 'hh_dc_shortcode' );
 
-/**
- * REST init.
- */
 add_action(
 	'rest_api_init',
 	static function () {

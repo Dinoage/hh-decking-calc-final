@@ -6,7 +6,12 @@ document.addEventListener("DOMContentLoaded", function () {
   const typeSelect = document.getElementById("dc-type");
   const colorRow = document.getElementById("dc-color-row");
   const colorSelect = document.getElementById("dc-color");
+  
+  // Containers (rows) voor verbergen/tonen
+  const heightRow = document.getElementById("dc-height-row");
   const heightSelect = document.getElementById("dc-height");
+  const polesRow = document.getElementById("dc-poles-row");
+  const polesSelect = document.getElementById("dc-poles");
 
   const subtypeRow = document.getElementById("dc-subtype-row");
   const subtypeSelect = document.getElementById("dc-subtype");
@@ -40,8 +45,6 @@ document.addEventListener("DOMContentLoaded", function () {
         subtypeSelect.appendChild(opt);
       });
       subtypeRow.style.display = "block";
-
-      // ✅ Safari fix: forceer reset (anders onthoudt hij oude waarde)
       subtypeSelect.selectedIndex = 0;
     } else {
       subtypeRow.style.display = "none";
@@ -59,10 +62,12 @@ document.addEventListener("DOMContentLoaded", function () {
     Object.values(HHDC.config.mappings).forEach((map) => {
       if (map.type !== type) return;
 
-      // filter ook op subtype (bij hout én bamboe)
+      // filter ook op subtype
       if (subtype && map.subtype && map.subtype !== subtype) return;
 
+      // Hoogtes: alleen toevoegen als > 0, tenzij het een tegel is (dan boeit het niet, wordt toch verborgen)
       if (map.thick_mm && map.thick_mm > 0) heights.add(map.thick_mm);
+      
       if (map.color) colors.add(map.color);
     });
 
@@ -73,7 +78,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   /**
-   * Vul hoogte- en kleurvelden op basis van selectie
+   * Vul velden & Verberg overbodige stappen (Tegels)
    */
   function updateFields() {
     const type = typeSelect.value;
@@ -81,23 +86,44 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const { heights, colors } = getOptions(type, subtype);
 
-    // Hoogte vullen
-    heightSelect.innerHTML = '<option value="">-- Kies… --</option>';
-    heights.forEach((h) => {
-      const opt = document.createElement("option");
-      opt.value = h;
-      opt.textContent = `${h} mm`;
-      heightSelect.appendChild(opt);
-    });
+    // 1. Specifiek gedrag voor TEGELS: 
+    // - Geen piketpalen (Balkon)
+    // - Vaak geen hoogtekeuze (indien maar 1 soort of 0mm in config)
+    const isTile = (subtype === 'tegel');
 
-    // Kleur vullen
+    // --- PLAATSING (Piketpalen) ---
+    if (isTile) {
+      polesRow.style.display = "none";
+      polesSelect.value = "none"; // Forceer 'zonder piketpalen'
+      // Verberg ook de paalmaat (die hangt af van polesSelect change, dus trigger die eventueel)
+      document.getElementById("dc-pole-size-row").style.display = "none";
+    } else {
+      polesRow.style.display = "block";
+    }
+
+    // --- HOOGTE ---
+    // Als er geen hoogtes zijn gevonden (bv bij tegels met dikte 0) of het is een tegel, verberg hoogte.
+    if (heights.length === 0 || isTile) {
+       heightRow.style.display = "none";
+       heightSelect.innerHTML = '<option value="0" selected>Standaard</option>';
+    } else {
+       heightRow.style.display = "block";
+       heightSelect.innerHTML = '<option value="">-- Kies… --</option>';
+       heights.forEach((h) => {
+         const opt = document.createElement("option");
+         opt.value = h;
+         opt.textContent = `${h} mm`;
+         heightSelect.appendChild(opt);
+       });
+    }
+
+    // --- KLEUR ---
     colorSelect.innerHTML = '<option value="">-- Kies kleur… --</option>';
     if (colors.length > 0) {
       colors.forEach((c) => {
         const opt = document.createElement("option");
         opt.value = c;
-        opt.textContent =
-          c.charAt(0).toUpperCase() + c.slice(1).replace("_", " ");
+        opt.textContent = c.charAt(0).toUpperCase() + c.slice(1).replace("_", " ");
         colorSelect.appendChild(opt);
       });
       colorRow.style.display = "block";
@@ -106,34 +132,29 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
-  /**
-   * 🧠 Type verandert → rebuild subtypes, bind event opnieuw (Safari fix)
-   */
+  // Event Listeners
   typeSelect.addEventListener("change", () => {
     setSubtypeOptions(typeSelect.value);
     updateFields();
-
-    // Safari fix: herbind het change-event na reset van de options
-    subtypeSelect.onchange = updateFields;
+    subtypeSelect.onchange = updateFields; // Re-bind voor Safari fix
   });
 
-  // Subtype verandert → update alleen velden
   subtypeSelect.addEventListener("change", updateFields);
 
-  // Initieel vullen bij page load
-  setSubtypeOptions(typeSelect.value);
-  updateFields();
-
-  // ✅ Nieuw: piketpalen-keuze tonen/verbergen
-  const poleSelect = document.getElementById("dc-poles");
+  // Piketpalen-keuze tonen/verbergen logica (voor als de row wel zichtbaar is)
   const poleSizeRow = document.getElementById("dc-pole-size-row");
   const poleSizeSelect = document.getElementById("dc-pole-size");
 
-  if (poleSelect) {
-    poleSelect.addEventListener("change", (e) => {
+  if (polesSelect) {
+    polesSelect.addEventListener("change", (e) => {
       poleSizeRow.style.display = e.target.value === "with" ? "block" : "none";
     });
   }
+
+  // Init
+  setSubtypeOptions(typeSelect.value);
+  updateFields();
+
 
   /**
    * Berekening verzenden
@@ -146,9 +167,9 @@ document.addEventListener("DOMContentLoaded", function () {
       subtype: subtypeSelect.value || "",
       length: parseFloat(document.getElementById("dc-length").value),
       width: parseFloat(document.getElementById("dc-width").value),
-      height: parseInt(heightSelect.value, 10),
+      height: parseInt(heightSelect.value, 10) || 0, // Fallback naar 0 voor tegels
       color: colorSelect.value || "",
-      poles: poleSelect?.value || "none",
+      poles: polesSelect?.value || "none",
       pole_size: poleSizeSelect?.value || ""
     };
 
@@ -190,9 +211,6 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  /**
-   * Winkelmand-knop
-   */
   addBtn.addEventListener("click", async function () {
     const lines = JSON.parse(addBtn.dataset.lines || "[]");
     if (!lines.length) return;
