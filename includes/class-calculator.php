@@ -214,18 +214,28 @@ class Calculator {
 	 * - Anders: 70/30 over totale lengte
 	 * - 30%-deel: als geen stocklengte >= 30% → gebruik paren: stocklengte >= 2×30%, qty = ceil(rijen/2)
 	 */
+	/**
+	 * Hout: verdeel aantallen per lengte-variatie.
+	 * * NIEUWE LOGICA:
+	 * 1. Als 70% van lengte > langste voorraadplank:
+	 * -> Gebruik 1x langste plank + vul rest op (met parens-check).
+	 * 2. Anders:
+	 * -> Standaard 70/30 regel.
+	 */
 	private static function calculate_hout_planken( array $map, float $len_m, float $wid_m ): array {
 		$width_mm = (int) ( $map['width_mm'] ?? 0 );
 		$lengths  = array_keys( $map['length_variations'] ?? [] );
+		
 		if ( empty( $width_mm ) || empty( $lengths ) ) {
 			return [ 'by_length' => [], 'total_qty' => 0, 'rows' => 0, 'explain' => __( 'Ongeldige plankconfiguratie.', 'hh-decking-calc' ) ];
 		}
 
-		sort( $lengths );               // oplopend
-		$longest_mm = end( $lengths );  // langste
+		sort( $lengths );               // oplopend (bijv: 2450, ..., 4900)
+		$longest_mm = end( $lengths );  // langste plank (4900)
 		$longest_m  = $longest_mm / 1000;
+		$target_mm  = (int)($len_m * 1000); // Totaal benodigde lengte in mm
 
-		// --- rijen omhoog (breedte)
+		// --- Rijen berekenen
 		$spacing_mm  = 5;
 		$plank_mod_m = ( $width_mm + $spacing_mm ) / 1000;
 		$rows        = (int) ceil( $wid_m / $plank_mod_m );
@@ -233,58 +243,105 @@ class Calculator {
 		$by_length = [];
 		$explain   = [];
 
-		// helper voor optellen
+		// Helper functie om aantallen op te tellen
 		$add = function( int $len_mm, int $qty ) use ( &$by_length ) {
 			if ( $qty <= 0 ) return;
 			$by_length[ $len_mm ] = ( $by_length[ $len_mm ] ?? 0 ) + $qty;
 		};
 
-		// ---- interne routine: 70/30 over een gegeven "doellengte" L
-		$apply_7030 = static function( float $L_m, int $rows_local ) use ( $lengths, &$add, &$explain ) {
-			$seg70 = $L_m * 0.7;
-			$seg30 = $L_m * 0.3;
-
-			// 70%-deel: neem kleinste stocklengte >= seg70
-			$L70_mm = Calculator::ceil_length( $seg70, $lengths );
-			$add( $L70_mm, $rows_local );
-			$explain[] = sprintf('70%%: %.2fm → %dmm × %d', $seg70, $L70_mm, $rows_local);
-
-			// 30%-deel:
-			// - eerst check of er stocklengte >= 2*seg30 (paren) bestaat
-			// - als 2×30% past in één planklengte → gebruik die met ceil(rows/2)
-			// - anders: als stocklengte >= seg30 → 1 per rij
-			$L30_pair_mm = Calculator::ceil_length( 2 * $seg30, $lengths, false );
-			if ( $L30_pair_mm > 0 ) {
-				$qty_pairs = (int) ceil( $rows_local / 2 );
-				$add( $L30_pair_mm, $qty_pairs );
-				$explain[] = sprintf('2×30%%: 2×%.2fm → %dmm × %d (paren)', $seg30, $L30_pair_mm, $qty_pairs);
-			} else {
-				$L30_direct_mm = Calculator::ceil_length( $seg30, $lengths );
-				$add( $L30_direct_mm, $rows_local );
-				$explain[] = sprintf('30%%: %.2fm → %dmm × %d', $seg30, $L30_direct_mm, $rows_local);
-			}
-		};
-
-		// ---- hoofdlogica
-		if ( 2 * $longest_m <= $len_m ) {
-			// Jouw regel: bij lange lengtes → 1× langste per rij, rest met 70/30
+		// ---------------------------------------------------------
+		// SCENARIO 1: Zeer lang terras (> 2x langste plank)
+		// ---------------------------------------------------------
+		// Bijv: 12 meter. Dan leggen we sowieso 1 hele plank per rij, en kijken we naar de rest.
+		if ( $len_m > ( 2 * $longest_m ) ) {
+			// Dit is een simpele benadering voor >10m: 1x langste + recursie/rest
 			$add( $longest_mm, $rows );
 			$rest_m = $len_m - $longest_m;
-			$explain[] = sprintf('Lang: 1× %dmm per rij (%d×), rest=%.2fm', $longest_mm, $rows, $rest_m);
-			if ( $rest_m > 0.01 ) {
-				$apply_7030( $rest_m, $rows );
-			}
-		} else {
-			// Standaard: 70/30 over totale lengte
-			$apply_7030( $len_m, $rows );
+			$explain[] = sprintf('Lengte > 2x max: 1x %dmm per rij, rest %.2fm berekenen', $longest_mm, $rest_m);
+			
+			// Hier zou je eigenlijk recursief kunnen zijn, maar voor nu doen we simpel de rest:
+			// We behandelen de 'rest' alsof het een nieuw terras is voor de logica hieronder.
+			$len_m = $rest_m; 
+			$target_mm = (int)($len_m * 1000);
 		}
 
-		ksort( $by_length ); // netjes
+		// ---------------------------------------------------------
+		// KERN LOGICA: 70% Check
+		// ---------------------------------------------------------
+		
+		$ideal_70_mm = $target_mm * 0.7;
 
-		$total_qty = array_sum( $by_length );
+		// SITUATIE A: De ideale 70% is groter dan onze langste plank.
+		// (Bijv: 7m totaal -> 70% = 4900. Als max = 4600, dan trigger.)
+		// OF (jouw voorbeeld): 7m totaal, max = 4900. 4900 past precies, maar rest (2100) moet slim.
+		// Laten we jouw regel strikt toepassen: Als 70% >= Max lengte (of net niet passend),
+		// Dan 'Maximaliseer plank 1' en 'Optimaliseer plank 2'.
+		
+		if ( $ideal_70_mm > $longest_mm ) {
+			// Stap 1: Pak de langste plank voor het eerste deel
+			$add( $longest_mm, $rows );
+			
+			// Stap 2: Bereken overgebleven lengte
+			$remainder_mm = $target_mm - $longest_mm;
+			
+			// Veiligheidscheck (uit je notitie): Benodigde lengte nooit groter dan plank?
+			// Als remainder > longest is, hebben we een probleem (zou door Scenario 1 afgevangen moeten zijn).
+			if ( $remainder_mm > $longest_mm ) {
+				$explain[] = 'LET OP: Reststuk is groter dan langste plank, handmatig controleren!';
+			}
+
+			// Stap 3: Optimaliseer het reststuk (Check paren)
+			// Probeer 2x het reststuk in één plank te passen (bijv 2x 2100 = 4200 -> past in 4300)
+			$pair_target_m = ($remainder_mm * 2) / 1000;
+			$L_pair_mm = Calculator::ceil_length( $pair_target_m, $lengths, false );
+
+			if ( $L_pair_mm > 0 ) {
+				// Ja, paren kan!
+				$qty_pairs = (int) ceil( $rows / 2 );
+				$add( $L_pair_mm, $qty_pairs );
+				$explain[] = sprintf(
+					'Max-Strat: 1x %dmm + Rest %dmm (x2 in %dmm -> %d stuks)',
+					$longest_mm, $remainder_mm, $L_pair_mm, $qty_pairs
+				);
+			} else {
+				// Nee, paren past niet in een voorraadlengte, pak de best passende enkele plank
+				$L_single_mm = Calculator::ceil_length( $remainder_mm / 1000, $lengths );
+				$add( $L_single_mm, $rows );
+				$explain[] = sprintf(
+					'Max-Strat: 1x %dmm + Rest %dmm (enkel in %dmm)',
+					$longest_mm, $remainder_mm, $L_single_mm
+				);
+			}
+
+		} 
+		// SITUATIE B: 70% past gewoon binnen de beschikbare lengtes (Standaard 70/30)
+		else {
+			$seg70 = $len_m * 0.7;
+			$seg30 = $len_m * 0.3;
+
+			// 1. Zoek plank voor 70%
+			$L70_mm = Calculator::ceil_length( $seg70, $lengths );
+			$add( $L70_mm, $rows );
+
+			// 2. Zoek plank voor 30% (eerst checken op paren)
+			$L30_pair_mm = Calculator::ceil_length( 2 * $seg30, $lengths, false );
+			
+			if ( $L30_pair_mm > 0 ) {
+				$qty_pairs = (int) ceil( $rows / 2 );
+				$add( $L30_pair_mm, $qty_pairs );
+				$explain[] = sprintf('70/30: 70%%(%dmm) + 2x30%% in %dmm', $L70_mm, $L30_pair_mm);
+			} else {
+				$L30_direct_mm = Calculator::ceil_length( $seg30, $lengths );
+				$add( $L30_direct_mm, $rows );
+				$explain[] = sprintf('70/30: 70%%(%dmm) + 30%%(%dmm)', $L70_mm, $L30_direct_mm);
+			}
+		}
+
+		ksort( $by_length );
+
 		return [
 			'by_length' => $by_length,
-			'total_qty' => (int) $total_qty,
+			'total_qty' => (int) array_sum( $by_length ),
 			'rows'      => $rows,
 			'explain'   => implode(' | ', $explain),
 		];
